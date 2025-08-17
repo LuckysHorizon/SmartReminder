@@ -20,6 +20,38 @@ export interface ScheduledNotification {
 }
 
 const NOTIFICATIONS_STORE = "scheduled-notifications"
+const ACTIVE_NOTIFICATIONS_KEY = "active-notifications"
+const NOTIFICATION_COOLDOWN = 30000 // 30 seconds cooldown between same notifications
+
+function getActiveNotifications(): Set<string> {
+  try {
+    const stored = localStorage.getItem(ACTIVE_NOTIFICATIONS_KEY)
+    return new Set(stored ? JSON.parse(stored) : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function setActiveNotifications(notifications: Set<string>): void {
+  try {
+    localStorage.setItem(ACTIVE_NOTIFICATIONS_KEY, JSON.stringify([...notifications]))
+  } catch (error) {
+    console.error("Failed to store active notifications:", error)
+  }
+}
+
+function addActiveNotification(taskId: string): void {
+  const active = getActiveNotifications()
+  active.add(taskId)
+  setActiveNotifications(active)
+
+  // Remove from active list after cooldown
+  setTimeout(() => {
+    const current = getActiveNotifications()
+    current.delete(taskId)
+    setActiveNotifications(current)
+  }, NOTIFICATION_COOLDOWN)
+}
 
 export async function requestNotificationPermission(): Promise<NotificationPermissionStatus> {
   if (!("Notification" in window)) {
@@ -306,7 +338,6 @@ export async function showNotification(
       silent: false,
       tag: data?.taskId || options?.category || "task-reminder",
       renotify: options?.category === "overdue" || (options?.snoozeCount && options.snoozeCount > 0),
-      timestamp: Date.now(),
       image: options?.category === "overdue" ? "/notification-urgent.png" : undefined,
     }
 
@@ -336,80 +367,80 @@ export async function showNotification(
   }
 }
 
-export async function checkAndTriggerNotifications(): Promise<void> {
-  try {
-    const notifications = await getScheduledNotifications()
-    const now = Date.now()
+let notificationInterval: NodeJS.Timeout | null = null
 
-    const dueNotifications = notifications.filter((n) => !n.isTriggered && n.scheduledTime <= now)
+async function checkAndTriggerNotifications(): Promise<void> {
+  const notifications = await getScheduledNotifications()
+  const now = Date.now()
 
-    if (dueNotifications.length === 0) return
-
-    const groups = groupNotificationsByTimeAndPriority(dueNotifications, 3 * 60 * 1000) // 3 minute window
-
-    for (const group of groups) {
-      if (group.length === 1) {
-        const notification = group[0]
-        await showNotification(
-          notification.title,
-          notification.body,
-          {
-            taskId: notification.taskId,
-            notificationId: notification.id,
-          },
-          {
-            priority: notification.priority,
-            category: notification.category,
-            taskDueDate: notification.taskDueDate,
-            snoozeCount: notification.snoozeCount,
-          },
-        )
-      } else {
-        const overdueCount = group.filter((n) => n.category === "overdue").length
-        const highPriorityCount = group.filter((n) => n.priority === "high").length
-
-        let groupTitle = `${group.length} tasks need attention`
-        if (overdueCount > 0) {
-          groupTitle = `${overdueCount} overdue task${overdueCount > 1 ? "s" : ""} + ${group.length - overdueCount} more`
-        } else if (highPriorityCount > 0) {
-          groupTitle = `${highPriorityCount} urgent task${highPriorityCount > 1 ? "s" : ""} + ${group.length - highPriorityCount} more`
-        }
-
-        const groupBody = group
-          .slice(0, 3)
-          .map((n) => n.body.replace("Don't forget: ", ""))
-          .join(", ")
-
-        const remainingCount = group.length - 3
-        const finalBody = remainingCount > 0 ? `${groupBody} and ${remainingCount} more` : groupBody
-
-        await showNotification(
-          groupTitle,
-          finalBody,
-          {
-            taskIds: group.map((n) => n.taskId),
-            notificationIds: group.map((n) => n.id),
-            isGrouped: true,
-          },
-          {
-            priority: group.some((n) => n.priority === "high") ? "high" : "normal",
-            category: group.some((n) => n.category === "overdue") ? "overdue" : "reminder",
-            isGrouped: true,
-            groupCount: group.length,
-          },
-        )
-      }
-
-      for (const notification of group) {
-        await markNotificationTriggered(notification.id)
-
-        if (notification.isRecurring && notification.recurringPattern) {
-          await scheduleRecurringNotification(notification)
-        }
+  for (const notification of notifications) {
+    if (!notification.isTriggered && notification.scheduledTime <= now) {
+      await showNotification(
+        notification.title,
+        notification.body,
+        { taskId: notification.taskId },
+        {
+          priority: notification.priority,
+          category: notification.category,
+          taskDueDate: notification.taskDueDate,
+          snoozeCount: notification.snoozeCount,
+          isGrouped: notification.isGrouped,
+        },
+      )
+      await markNotificationTriggered(notification.id)
+      if (notification.isRecurring) {
+        await scheduleRecurringNotification(notification)
       }
     }
-  } catch (error) {
-    console.error("Error checking notifications:", error)
+  }
+}
+
+export function startNotificationScheduler(): void {
+  if (notificationInterval) {
+    clearInterval(notificationInterval)
+  }
+
+  notificationInterval = setInterval(checkAndTriggerNotifications, 120000)
+
+  // Initial check
+  checkAndTriggerNotifications()
+
+  let visibilityTimeout: NodeJS.Timeout | null = null
+  const handleVisibilityChange = () => {
+    if (!document.hidden) {
+      if (visibilityTimeout) clearTimeout(visibilityTimeout)
+      visibilityTimeout = setTimeout(checkAndTriggerNotifications, 1000)
+    }
+  }
+
+  let focusTimeout: NodeJS.Timeout | null = null
+  const handleFocus = () => {
+    if (focusTimeout) clearTimeout(focusTimeout)
+    focusTimeout = setTimeout(checkAndTriggerNotifications, 1000)
+  }
+
+  document.addEventListener("visibilitychange", handleVisibilityChange)
+  window.addEventListener("focus", handleFocus)
+
+  // Store cleanup functions
+  ;(window as any).__notificationCleanup = () => {
+    document.removeEventListener("visibilitychange", handleVisibilityChange)
+    window.removeEventListener("focus", handleFocus)
+    if (visibilityTimeout) clearTimeout(visibilityTimeout)
+    if (focusTimeout) clearTimeout(focusTimeout)
+  }
+}
+
+export function stopNotificationScheduler(): void {
+  if (notificationInterval) {
+    clearInterval(notificationInterval)
+    notificationInterval = null
+  }
+
+  const cleanup = (window as any).__notificationCleanup
+  if (cleanup) {
+    cleanup()
+    delete (window as any).__notificationCleanup
   }
 }
 
@@ -576,28 +607,5 @@ export async function scheduleTaskReminder(
     }
 
     await scheduleTaskReminder(taskId, taskTitle, nextReminderDate.toISOString(), isRepeating, repeatInterval, options)
-  }
-}
-
-export function startNotificationScheduler(): void {
-  const checkInterval = setInterval(checkAndTriggerNotifications, 60000)
-
-  checkAndTriggerNotifications()
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      checkAndTriggerNotifications()
-    }
-  })
-
-  window.addEventListener("focus", checkAndTriggerNotifications)
-  ;(window as any).__notificationInterval = checkInterval
-}
-
-export function stopNotificationScheduler(): void {
-  const intervalId = (window as any).__notificationInterval
-  if (intervalId) {
-    clearInterval(intervalId)
-    delete (window as any).__notificationInterval
   }
 }

@@ -27,6 +27,7 @@ export default function SmartReminderApp() {
   const [showSiriShortcuts, setShowSiriShortcuts] = useState(false)
   const [tempName, setTempName] = useState("")
   const [activeTab, setActiveTab] = useState<"tasks" | "resources" | "performance">("tasks")
+  const [notificationSchedulerStarted, setNotificationSchedulerStarted] = useState(false)
 
   const tabs = ["tasks", "resources", "performance"] as const
   const currentTabIndex = tabs.indexOf(activeTab)
@@ -54,7 +55,6 @@ export default function SmartReminderApp() {
       switch (action) {
         case "create-task":
           setActiveTab("tasks")
-          // Could trigger voice input or task form here
           break
         case "view-tasks":
           setActiveTab("tasks")
@@ -67,7 +67,6 @@ export default function SmartReminderApp() {
           break
       }
 
-      // Clear URL parameters after handling
       if (action) {
         window.history.replaceState({}, document.title, window.location.pathname)
       }
@@ -75,19 +74,15 @@ export default function SmartReminderApp() {
 
     handleURLParams()
 
-    // Check for user profile
     const profile = getUserProfile()
     if (profile) {
       setUserName(profile.name)
-      // Apply user's preferred theme
       if (profile.preferences.theme !== theme) {
         setTheme(profile.preferences.theme)
       }
     } else {
-      // Check legacy storage
       const legacyName = localStorage.getItem("smart-reminder-user-name")
       if (legacyName) {
-        // Migrate to new profile system
         const newProfile = createDefaultProfile(legacyName)
         saveUserProfile(newProfile)
         setUserName(legacyName)
@@ -98,19 +93,26 @@ export default function SmartReminderApp() {
     }
 
     const initNotifications = async () => {
-      // Request notification permission
-      await requestNotificationPermission()
+      if (notificationSchedulerStarted) return
 
-      // Start the notification scheduler
-      startNotificationScheduler()
+      try {
+        await requestNotificationPermission()
+        startNotificationScheduler()
+        setNotificationSchedulerStarted(true)
+      } catch (error) {
+        console.error("Failed to initialize notifications:", error)
+      }
     }
 
     initNotifications()
 
     return () => {
-      stopNotificationScheduler()
+      if (notificationSchedulerStarted) {
+        stopNotificationScheduler()
+        setNotificationSchedulerStarted(false)
+      }
     }
-  }, [theme, setTheme])
+  }, [theme, setTheme, notificationSchedulerStarted])
 
   const handleOnboardingComplete = () => {
     if (tempName.trim()) {
@@ -120,7 +122,6 @@ export default function SmartReminderApp() {
       setShowOnboarding(false)
       setTempName("")
 
-      // Update stats for joining
       updateUserStats({ tasksCreated: 0 })
 
       triggerHaptic("success")
@@ -133,7 +134,6 @@ export default function SmartReminderApp() {
     const timeGreeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
     const name = userName || "there"
 
-    // Check if motivational messages are enabled
     if (profile?.preferences.motivationalMessages === false) {
       return `${timeGreeting}, ${name}!`
     }
@@ -144,7 +144,6 @@ export default function SmartReminderApp() {
   const getMotivationalMessage = () => {
     const profile = getUserProfile()
 
-    // Check if motivational messages are disabled
     if (profile?.preferences.motivationalMessages === false) {
       return "Let's get productive!"
     }
@@ -160,7 +159,6 @@ export default function SmartReminderApp() {
       "You've got this! Stay consistent!",
     ]
 
-    // Personalized messages based on streak
     if (profile?.stats.currentStreak > 0) {
       messages.push(`Amazing ${profile.stats.currentStreak}-day streak! Keep it going!`)
     }
@@ -175,28 +173,45 @@ export default function SmartReminderApp() {
   return (
     <div className="min-h-screen bg-background" ref={swipeRef}>
       <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md ios-safe-top">
-        <div className="flex items-center justify-between px-4 py-3 ios-safe-left ios-safe-right">
-          <div className="flex items-center gap-3">
-            <Image src="/logo.png" alt="LuckysHorizon Logo" width={32} height={32} className="rounded-lg" />
-            <div>
-              <h1 className="text-lg font-bold">SmartReminder</h1>
-              <p className="text-xs text-muted-foreground">by LuckysHorizon</p>
+        <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 ios-safe-left ios-safe-right">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+            <Image
+              src="/logo.png"
+              alt="LuckysHorizon Logo"
+              width={28}
+              height={28}
+              className="rounded-lg flex-shrink-0 sm:w-8 sm:h-8"
+            />
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-bold truncate">SmartReminder</h1>
+              <p className="text-xs text-muted-foreground hidden sm:block">by LuckysHorizon</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setShowSiriShortcuts(true)} className="text-xs">
-              🎤 Siri
+          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowSiriShortcuts(true)}
+              className="text-xs px-2 sm:px-3 py-1 sm:py-2 h-8 sm:h-9 touch-target"
+            >
+              <Image
+                src="/siri-logo.png"
+                alt="Siri"
+                width={16}
+                height={16}
+                className="mr-1 sm:mr-2 w-4 h-4 rounded-sm"
+              />
+              <span className="hidden sm:inline">Siri</span>
             </Button>
 
-            <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+            <div className="flex items-center gap-0.5 sm:gap-1 rounded-lg bg-muted p-0.5 sm:p-1">
               {(["light", "dark", "cinematic"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => {
                     setTheme(t)
                     triggerHaptic("light")
-                    // Update user preference
                     const profile = getUserProfile()
                     if (profile) {
                       const updatedProfile = {
@@ -206,11 +221,16 @@ export default function SmartReminderApp() {
                       saveUserProfile(updatedProfile)
                     }
                   }}
-                  className={`touch-target px-3 py-2 text-xs font-medium rounded-md transition-colors ${
+                  className={`touch-target px-1.5 sm:px-3 py-1 sm:py-2 text-xs font-medium rounded-md transition-colors ${
                     theme === t ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {t === "cinematic" ? "App theme" : t}
+                  {t === "cinematic" ? (
+                    <span className="hidden sm:inline">App theme</span>
+                  ) : (
+                    <span className="capitalize">{t}</span>
+                  )}
+                  {t === "cinematic" && <span className="sm:hidden">🎬</span>}
                 </button>
               ))}
             </div>
@@ -218,7 +238,6 @@ export default function SmartReminderApp() {
         </div>
 
         <div className="flex border-t border-border relative">
-          {/* Swipe indicator */}
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-accent/30 to-transparent opacity-50"></div>
 
           {[
@@ -232,34 +251,34 @@ export default function SmartReminderApp() {
                 setActiveTab(tab.id as any)
                 triggerHaptic("light")
               }}
-              className={`flex-1 flex items-center justify-center gap-2 py-4 text-sm font-medium transition-all duration-200 touch-target relative ${
+              className={`flex-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-3 sm:py-4 text-xs sm:text-sm font-medium transition-all duration-200 touch-target relative ${
                 activeTab === tab.id
                   ? "text-accent border-b-2 border-accent scale-105"
                   : "text-muted-foreground hover:text-foreground hover:scale-102"
               }`}
             >
-              <span className={`transition-transform duration-200 ${activeTab === tab.id ? "scale-110" : ""}`}>
+              <span
+                className={`transition-transform duration-200 text-sm sm:text-base ${activeTab === tab.id ? "scale-110" : ""}`}
+              >
                 {tab.icon}
               </span>
-              {tab.label}
+              <span className="text-xs sm:text-sm">{tab.label}</span>
 
-              {/* Active tab indicator */}
               {activeTab === tab.id && (
-                <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-8 h-0.5 bg-accent rounded-full"></div>
+                <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-6 sm:w-8 h-0.5 bg-accent rounded-full"></div>
               )}
             </button>
           ))}
         </div>
       </header>
 
-      <main className="px-4 py-6 ios-safe-left ios-safe-right ios-safe-bottom">
-        {/* Greeting Section */}
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold mb-1">{getGreeting()}</h2>
-          <p className="text-muted-foreground">{getMotivationalMessage()}</p>
+      <main className="px-3 sm:px-4 py-4 sm:py-6 ios-safe-left ios-safe-right ios-safe-bottom">
+        <div className="mb-4 sm:mb-6">
+          <h2 className="text-xl sm:text-2xl font-bold mb-1">{getGreeting()}</h2>
+          <p className="text-sm sm:text-base text-muted-foreground">{getMotivationalMessage()}</p>
         </div>
 
-        <div className="space-y-4 slide-in-up">
+        <div className="space-y-3 sm:space-y-4 slide-in-up">
           {activeTab === "tasks" && <TasksTab />}
           {activeTab === "resources" && <ResourcesTab />}
           {activeTab === "performance" && <PerformanceTab />}
@@ -267,26 +286,34 @@ export default function SmartReminderApp() {
       </main>
 
       <Dialog open={showOnboarding} onOpenChange={setShowOnboarding}>
-        <DialogContent className="sm:max-w-md mx-4">
+        <DialogContent className="sm:max-w-md mx-3 sm:mx-4 w-[calc(100vw-24px)] sm:w-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-3">
-              <Image src="/logo.png" alt="LuckysHorizon Logo" width={40} height={40} className="rounded-lg" />
+            <DialogTitle className="flex items-center gap-3 text-base sm:text-lg">
+              <Image
+                src="/logo.png"
+                alt="LuckysHorizon Logo"
+                width={32}
+                height={32}
+                className="rounded-lg sm:w-10 sm:h-10"
+              />
               Welcome to SmartReminder!
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-muted-foreground">Let's personalize your experience. What should we call you?</p>
+            <p className="text-sm sm:text-base text-muted-foreground">
+              Let's personalize your experience. What should we call you?
+            </p>
             <Input
               placeholder="Enter your name"
               value={tempName}
               onChange={(e) => setTempName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleOnboardingComplete()}
-              className="text-base" // Prevent zoom on iOS
+              className="text-base h-11 sm:h-10"
             />
             <Button
               onClick={handleOnboardingComplete}
               disabled={!tempName.trim()}
-              className="w-full btn-primary touch-target"
+              className="w-full btn-primary touch-target h-11 sm:h-10"
             >
               Get Started
             </Button>
@@ -295,9 +322,12 @@ export default function SmartReminderApp() {
       </Dialog>
 
       <Dialog open={showSiriShortcuts} onOpenChange={setShowSiriShortcuts}>
-        <DialogContent className="sm:max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl mx-3 sm:mx-4 w-[calc(100vw-24px)] sm:w-auto max-h-[85vh] sm:max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Siri Integration & Voice Features</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Image src="/siri-logo.png" alt="Siri" width={20} height={20} className="rounded-sm" />
+              Siri Integration & Voice Features
+            </DialogTitle>
           </DialogHeader>
           <SiriShortcuts />
         </DialogContent>
