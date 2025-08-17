@@ -1,7 +1,13 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import type { SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from "web-speech-api"
+
+declare global {
+  interface Window {
+    SpeechRecognition: any
+    webkitSpeechRecognition: any
+  }
+}
 
 interface SpeechRecognitionResult {
   transcript: string
@@ -25,7 +31,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [transcript, setTranscript] = useState("")
   const [confidence, setConfidence] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
+  const [recognition, setRecognition] = useState<any>(null)
 
   const isSupported =
     typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
@@ -45,7 +51,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       setError(null)
     }
 
-    recognitionInstance.onresult = (event: SpeechRecognitionEvent) => {
+    recognitionInstance.onresult = (event: any) => {
       let finalTranscript = ""
       let interimTranscript = ""
 
@@ -62,7 +68,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       setTranscript(finalTranscript || interimTranscript)
     }
 
-    recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
+    recognitionInstance.onerror = (event: any) => {
       setError(event.error)
       setIsListening(false)
     }
